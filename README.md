@@ -62,19 +62,19 @@ I moved things into a `src/` layout partway through because I kept running into 
 
 ## Walking through what each file actually does
 
-**`dicom_parser.py`** loads a single `.dcm` file and pulls out the stuff I need (rows/cols, rescale slope/intercept, window center/width, pixel spacing, etc.) into a `DicomMetadata` dataclass. A lot of real files are missing tags you'd expect to always be there, so basically every field has a fallback default. It also checks the file actually has `PixelData` before going further, since some DICOM files are just reports or presentation states with no image in them, which threw a confusing error the first time I hit one.
+`dicom_parser.py` loads a single `.dcm` file and pulls out the stuff I need (rows/cols, rescale slope/intercept, window center/width, pixel spacing, etc.) into a `DicomMetadata` dataclass. A lot of real files are missing tags you'd expect to always be there, so basically every field has a fallback default. It also checks the file actually has `PixelData` before going further, since some DICOM files are just reports or presentation states with no image in them, which threw a confusing error the first time I hit one.
 
-**`series_grouping.py`** exists because not every folder you download is actually one clean scan. I ran into public datasets where a scout/localizer series got bundled in with the real scan, and `dicom_series.load_dicom_series` would just fail with a shape mismatch and no real explanation. This module reads only the `SeriesInstanceUID` tag (skips pixel data entirely so it's fast) and splits the folder into per-series groups so you know what you're actually dealing with before loading anything.
+`series_grouping.py` exists because not every folder you download is actually one clean scan. I ran into public datasets where a scout/localizer series got bundled in with the real scan, and `dicom_series.load_dicom_series` would just fail with a shape mismatch and no real explanation. This module reads only the `SeriesInstanceUID` tag, skips pixel data entirely so it's fast, and splits the folder into per-series groups so you know what you're actually dealing with before loading anything.
 
-**`dicom_series.py`** takes a folder of slices and stacks them into one 3D volume, sorted by the z-coordinate from `ImagePositionPatient` rather than filename (filenames aren't reliable for ordering). `load_dicom_series_safe` builds on the grouping module to handle folders with more than one series automatically.
+`dicom_series.py` takes a folder of slices and stacks them into one 3D volume, sorted by the z-coordinate from `ImagePositionPatient` rather than filename, since filenames aren't reliable for ordering. `load_dicom_series_safe` builds on the grouping module to handle folders with more than one series automatically.
 
-**`processing_engine.py`** is all the numpy math from above. Fully vectorized, no per-pixel loops, since that would be way too slow on 512x512 arrays.
+`processing_engine.py` is all the numpy math from above. Fully vectorized, no per-pixel loops, since that would be way too slow on 512x512 arrays.
 
-**`mpr.py`** does the coronal/sagittal reconstruction described above.
+`mpr.py` does the coronal/sagittal reconstruction described above.
 
-**`image_export.py`** takes the final 8-bit array and turns it into a base64 PNG or JPEG so it can go straight into an image tag or API response without touching disk.
+`image_export.py` takes the final 8-bit array and turns it into a base64 PNG or JPEG so it can go straight into an image tag or API response without touching disk.
 
-**`scripts/run_local_series.py`** is my manual testing script, not part of the automated suite. It has single file / whole series / batch modes, and for batch mode it just logs failures instead of stopping on the first bad file, which was actually really useful for finding out how often real data breaks my assumptions.
+`scripts/run_local_series.py` is my manual testing script, not part of the automated suite. It has single file / whole series / batch modes, and for batch mode it just logs failures instead of stopping on the first bad file, which was actually really useful for finding out how often real data breaks my assumptions.
 
 ## Testing
 
@@ -87,14 +87,15 @@ pytest --cov=dicom_viewer --cov-report=term-missing
 
 ## Problems I ran into
 
-- **Overflow on rescale** — mentioned above, fixed by upcasting to float32 before the multiply instead of after.
-- **Tags that aren't scalars** — `WindowCenter`/`WindowWidth` can legally be stored as multi-value arrays instead of a single number. I added a small helper (`_first_value`) that just grabs the first value so the rest of the code doesn't have to think about it.
-- **Missing window values entirely** — some files just don't have a window center/width at all. When that happens I fall back to computing one from the actual data range:
+Overflow on rescale, mentioned above, fixed by upcasting to float32 before the multiply instead of after.
+
+`WindowCenter`/`WindowWidth` can legally be stored as multi-value arrays instead of a single number. I added a small helper (`_first_value`) that just grabs the first value so the rest of the code doesn't have to think about it.
+
+Some files just don't have a window center/width at all. When that happens I fall back to computing one from the actual data range:
 
 $$w_{auto} = \max(H) - \min(H), \qquad c_{auto} = \frac{\max(H) + \min(H)}{2}$$
 
-- **Mixed series in one folder** — covered above, this is what `series_grouping.py` is for.
-- **Non-isotropic voxels** — covered above, this is what the resampling in `mpr.py` is for.
+Mixed series in one folder, covered above, that's what `series_grouping.py` is for. Non-isotropic voxels, also covered above, that's what the resampling in `mpr.py` is for.
 
 ## Setup
 
@@ -118,17 +119,58 @@ python scripts/run_local_series.py --series sample_data/ct-lung-screening-nlst-s
 
 ## Results
 
-![Upper chest](docs/output_previews/test_1.png)
+These are renders straight out of the pipeline, running through the whole rescale -> window -> export chain. They're all from the same NLST series, just at different axial levels, so you can see how the picture changes as you move down through the body.
 
-Upper chest slice. You can see the trachea (dark, low density air) clearly separated from the bone around it, which is what told me the windowing math was actually working right and not just "looks okay by accident."
+<img width="512" height="512" alt="test_1" src="https://github.com/user-attachments/assets/1e9faef0-64bb-4275-95d6-24c49b75746b" />
 
-![Mid-cardiac](docs/output_previews/test_2.png)
 
-Mid-cardiac level, soft tissue windowing. The heart outline and the aorta (the circle above the spine) show up clearly without losing the lung detail around them.
+Upper chest, right where the trachea splits into the two main bronchi. Lungs are mostly clear here, you can see a few faint dots which are just small vessels caught end-on in cross section.
 
-![Sequential slice](docs/output_previews/test_3.png)
+<img width="512" height="512" alt="test_2" src="https://github.com/user-attachments/assets/6e847993-5678-472f-9815-cfac0a5322ba" />
 
-A slice right next to the one above, same series. Mostly here to show the rendering stays consistent slice to slice and doesn't randomly shift contrast.
+
+A bit lower, right at the aortic arch, so the mediastinum (that big gray blob in the middle) takes up a lot more space. This is soft tissue windowing, which is why the heart/vessels show up as one solid gray mass instead of being blown out.
+
+<img width="512" height="512" alt="test_3" src="https://github.com/user-attachments/assets/05fec9de-eebf-46e2-bf07-86f71fdf576d" />
+
+
+This one's actually into the upper abdomen already, liver filling most of the right side, stomach on the left with some air in it (the darker mottled area), spleen tucked in behind it.
+
+<img width="512" height="512" alt="test_4" src="https://github.com/user-attachments/assets/187abee6-58c3-4bc1-a186-f8d6f9629546" />
+
+
+Similar level to the first one, slightly lower. Lungs still mostly clear, small scattered vessel markings, trachea visible as a small dark circle up top.
+
+<img width="512" height="512" alt="test_5" src="https://github.com/user-attachments/assets/d3fce5f2-b660-4ea4-abf8-b1ebd8a05a84" />
+
+
+Heart level, similar to test_2 but you can actually see some internal structure in the mediastinum here instead of it being totally uniform gray, probably picking up chamber boundaries or contrast.
+<img width="512" height="512" alt="test_6" src="https://github.com/user-attachments/assets/025e4487-339e-400a-b49e-b972dbc38674" />
+
+
+This is actually up at the shoulder/neck junction, not the chest. You can see the collarbones and the round humeral heads on both sides, plus what looks like contrast sitting in the vessels near the spine.
+
+<img width="512" height="512" alt="test_7" src="https://github.com/user-attachments/assets/c2b03ed1-42c5-4af6-8eab-a4866f1477bd" />
+
+
+Back down to heart level again, similar framing to test_2 and test_5 but the heart shape looks slightly different since this is a different slice in the same region.
+
+<img width="512" height="512" alt="test_8" src="https://github.com/user-attachments/assets/51cf2ee8-b348-458c-9abc-d40016f59e83" />
+
+Upper abdomen, liver dominates the right side of the frame, stomach with a clear gas pocket top left, and what's probably the spleen as the oval shape lower left.
+
+<img width="512" height="512" alt="test_9" src="https://github.com/user-attachments/assets/600e7e83-52e1-46ad-9a51-035e8574ac6f" />
+
+Mid-abdomen. You can make out both kidneys (the rounder shapes toward the back on either side), plus bowel loops and more liver up top.
+<img width="512" height="512" alt="test_10" src="https://github.com/user-attachments/assets/221f5e30-6392-47c1-aa1a-19314c1708c9" />
+
+
+Neck level, lower down than test_6. Shoulders and collarbones on both sides, trachea and spine in the middle, and again some bright contrast-filled vessels near the humeral heads.
+
+<img width="512" height="512" alt="test_11" src="https://github.com/user-attachments/assets/e1643ff9-7887-4ad6-9096-09aae4b2f5a5" />
+
+
+Chest again, heart-level slice, same general anatomy as test_2/5/7 but from yet another point in the series. Having a bunch of these side by side is honestly what convinced me the windowing was actually consistent slice to slice and not just accidentally looking okay on one or two of them.
 
 ## Known limitations
 
