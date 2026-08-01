@@ -1,136 +1,146 @@
-# DICOM Project
+# DICOM Viewer
 
-A small Python pipeline for loading CT DICOM files, converting raw pixel
-data to Hounsfield Units, windowing them into a viewable image, and
-exporting the result as PNG/JPEG. It also handles whole series (a
-folder of slices from one scan), not just single files.
+A Python pipeline I built for loading, processing, and rendering DICOM medical images. It takes raw CT scan data (single files or a whole folder of slices) and turns it into something you can actually look at, going through the same rescale/window steps a real radiology viewer would use under the hood.
 
-I built this using the NLST lung-screening sample series
-(`ct-lung-screening-nlst-series/`) as my test data.
+I used the NLST lung-screening sample series (`sample_data/ct-lung-screening-nlst-series/`) as my main test data while building this.
 
-## Why this exists
+## Why I built this the way I did
 
-Raw pixel values in a DICOM file aren't directly viewable. CT scanners
-store data as raw integers that need to be rescaled into Hounsfield
-Units (HU) first, then "windowed" into an 8-bit range you can actually
-render as a grayscale image. Get either step wrong and the image looks
-fine but is medically meaningless, or looks visibly broken (inverted,
-blown out, etc). This project handles that pipeline end to end, plus
-the annoying edge cases real DICOM files throw at you (missing tags,
-MONOCHROME1 inversion, files that aren't images at all, folders with
-more than one scan mixed together).
+The thing that surprised me most going into this project is that a DICOM file isn't really an image at all. It's a raw integer array plus a bunch of scanner-specific metadata, and you have to do actual math on it before it looks like anything. Get the math wrong and you either get a blown-out white image, an inverted photo-negative-looking scan, or something that looks fine but is medically meaningless.
 
-## Project structure
+So most of this project is really about getting that conversion pipeline right, and then handling the edge cases that come up once you start using real downloaded data instead of a perfectly clean single file.
+
+## The math behind it
+
+CT scanners store radiodensity as raw sensor integers, not actual physical units. Every DICOM file has a `RescaleSlope` ($m$) and `RescaleIntercept` ($b$) tag that convert those raw values into Hounsfield Units (HU), which is the actual standardized density scale (air is about -1000, water is 0, bone goes up past +1000):
+
+$$H(x, y) = m \cdot P_{raw}(x, y) + b$$
+
+I implemented this in `processing_engine.apply_rescale`. One thing I ran into here: if you don't upcast the array to float32 before doing this multiplication, you get integer overflow wraparound because HU values go negative and the raw data comes in as unsigned ints. That bug produced some genuinely bizarre-looking images before I figured out what was happening.
+
+Once you have HU values, the next problem is that a scan can have a range of 4000+ HU, but your screen only has 256 grey levels. So you pick a window, a center ($c$) and width ($w$), and squash just that range down to 0-255:
+
+$$L = c - \frac{w}{2}, \quad U = c + \frac{w}{2}$$
+
+$$N(x, y) = \begin{cases} 0 & H(x, y) \le L \\ \dfrac{H(x, y) - L}{w} & L < H(x, y) < U \\ 1 & H(x, y) \ge U \end{cases}$$
+
+$$D(x, y) = \lfloor N(x, y) \cdot 255 \rfloor$$
+
+This is what lets you look at "lung window" vs "bone window" on the same scan and see completely different detail.
+
+There's also a photometric quirk: most files use `MONOCHROME2` (dense = bright), but some use `MONOCHROME1` where it's flipped. If you don't check for this, those files render inverted:
+
+$$D_{inverted}(x, y) = 255 - D(x, y)$$
+
+For picking a region and getting basic stats out of it (mean/std over a rectangle), it's just the standard formulas:
+
+$$\mu_{ROI} = \frac{1}{T}\sum R(i,j), \qquad \sigma_{ROI} = \sqrt{\frac{1}{T}\sum (R(i,j) - \mu_{ROI})^2}$$
+
+The last piece of math is in `mpr.py`. CT scans usually don't have equal spacing in all directions, like 0.7mm between pixels in a slice but 2.5mm between slices, so if you try to cut a coronal or sagittal view straight out of the raw volume it comes out looking squished. `resample_to_isotropic` fixes that by resampling the whole volume to equal spacing on all three axes first (using `scipy.ndimage.zoom`), and it figures out the real slice spacing from the actual z-positions of the slices instead of trusting the `SliceThickness` tag, which isn't always accurate if slices overlap.
+
+## Project layout
 
 ```
-dicom_parser.py       Load a single .dcm file, extract + normalize metadata
-processing_engine.py   Pure NumPy: rescale -> HU, window/level -> 8-bit, ROI stats
-dicom_series.py         Load a whole folder of slices as one ordered 3D volume
-series_grouping.py      Split a folder into separate series by SeriesInstanceUID
-mpr.py                  Resample a volume to isotropic spacing + coronal/sagittal slicing
-image_export.py         Convert a windowed array to base64 PNG/JPEG
-local series test.py    Manual smoke-test script (single file / one series / batch mode)
-tests/                  Automated pytest suite
+dicom-viewer/
+├── src/dicom_viewer/       package code, installable
+│   ├── dicom_parser.py       load one file + pull metadata safely
+│   ├── dicom_series.py       stack a folder of slices into one 3D volume
+│   ├── series_grouping.py    split a folder into separate scans if it's mixed
+│   ├── processing_engine.py  the rescale/window/ROI math above, all numpy
+│   ├── mpr.py                 coronal/sagittal views via isotropic resampling
+│   └── image_export.py       array -> base64 PNG/JPEG
+├── tests/                   pytest suite, uses synthetic dicom data
+├── scripts/run_local_series.py   manual CLI I use to eyeball real scans
+├── sample_data/              the actual 150-slice CT series I tested on
+├── docs/output_previews/     rendered PNGs from past runs
+├── pyproject.toml
+├── requirements.txt
+└── README.md
 ```
 
-## Pipeline, step by step
+I moved things into a `src/` layout partway through because I kept running into path issues when trying to import the modules from `tests/` and `scripts/` separately. Once it's an actual installable package (`pip install -e .`) everything just imports normally instead of needing sys.path hacks.
 
-1. **Load the file** (`dicom_parser.load_dicom_file`) — reads the
-   `.dcm` file and checks it actually has `PixelData`. Some DICOM
-   files are reports or presentation states with no image in them at
-   all, so this fails early and clearly instead of crashing later on a
-   confusing `AttributeError`.
+## Walking through what each file actually does
 
-2. **Extract metadata** (`dicom_parser.extract_metadata`) — pulls out
-   rows/columns, rescale slope/intercept, window center/width, pixel
-   spacing, and photometric interpretation, with a safe fallback for
-   every field. Real files are missing tags more often than you'd
-   expect, so nothing here assumes a tag is present.
+**`dicom_parser.py`** loads a single `.dcm` file and pulls out the stuff I need (rows/cols, rescale slope/intercept, window center/width, pixel spacing, etc.) into a `DicomMetadata` dataclass. A lot of real files are missing tags you'd expect to always be there, so basically every field has a fallback default. It also checks the file actually has `PixelData` before going further, since some DICOM files are just reports or presentation states with no image in them, which threw a confusing error the first time I hit one.
 
-3. **Rescale to HU** (`processing_engine.apply_rescale`) —
-   `pixel_value * slope + intercept`. This turns the sensor's raw
-   integers into actual Hounsfield Units, where air is about -1000 and
-   dense bone is around +1000 to +3000.
+**`series_grouping.py`** exists because not every folder you download is actually one clean scan. I ran into public datasets where a scout/localizer series got bundled in with the real scan, and `dicom_series.load_dicom_series` would just fail with a shape mismatch and no real explanation. This module reads only the `SeriesInstanceUID` tag (skips pixel data entirely so it's fast) and splits the folder into per-series groups so you know what you're actually dealing with before loading anything.
 
-4. **Window/level** (`processing_engine.apply_window_level`) — maps a
-   chosen HU range down to 0-255 so it can be displayed. Also handles
-   `MONOCHROME1` inversion, where low pixel values are supposed to
-   render as white instead of black.
+**`dicom_series.py`** takes a folder of slices and stacks them into one 3D volume, sorted by the z-coordinate from `ImagePositionPatient` rather than filename (filenames aren't reliable for ordering). `load_dicom_series_safe` builds on the grouping module to handle folders with more than one series automatically.
 
-5. **Export** (`image_export.array_to_base64_image` /
-   `array_to_data_uri`) — turns the windowed 8-bit array into a PNG or
-   JPEG, base64-encoded.
+**`processing_engine.py`** is all the numpy math from above. Fully vectorized, no per-pixel loops, since that would be way too slow on 512x512 arrays.
 
-For a full scan instead of one file, `dicom_series.load_dicom_series`
-loads every slice in a folder, sorts them by physical position
-(`ImagePositionPatient`'s z-coordinate, not filename), and stacks them
-into one 3D HU volume.
+**`mpr.py`** does the coronal/sagittal reconstruction described above.
 
-## Handling messy multi-series folders
+**`image_export.py`** takes the final 8-bit array and turns it into a base64 PNG or JPEG so it can go straight into an image tag or API response without touching disk.
 
-Not every folder you download is actually one clean series.
-Downloads from public archives sometimes mix a scout/localizer series
-in with the main scan, or bundle two scans from the same visit
-together. `dicom_series.load_dicom_series` used to just fail with a
-shape-mismatch error in that case, which tells you something's wrong
-but not what to do about it.
-
-`series_grouping.group_by_series` fixes that by reading just the
-`SeriesInstanceUID` tag (no pixel data, so it's cheap) and splitting
-the folder into per-series file lists. `dicom_series.load_dicom_series_safe`
-builds on that: it loads every series it finds and returns them as a
-list, largest first, instead of forcing you to pre-sort the folder by
-hand.
-
-## Multi-planar reconstruction
-
-`mpr.py` adds coronal and sagittal views on top of the axial volume
-you get from loading a series. CT slices almost never have equal
-spacing in all three directions (e.g. 0.7mm between pixels within a
-slice but 10mm between slices), so cutting straight through the raw
-volume along another axis comes out stretched. `resample_to_isotropic`
-fixes that first by resampling the whole volume to equal spacing in
-every direction, then `get_coronal_slice` / `get_sagittal_slice` cut
-through the result.
+**`scripts/run_local_series.py`** is my manual testing script, not part of the automated suite. It has single file / whole series / batch modes, and for batch mode it just logs failures instead of stopping on the first bad file, which was actually really useful for finding out how often real data breaks my assumptions.
 
 ## Testing
 
-The `tests/` folder has a real pytest suite, not just the manual
-script. It runs against small synthetic DICOM datasets built in
-`tests/conftest.py`, not the sample scan, so it can hit specific edge
-cases on purpose (missing tags, `MONOCHROME1`, zero window width, a
-folder with two series mixed together) instead of hoping the sample
-data happens to contain them.
-
-Run it with:
+The `tests/` folder is a real pytest suite, separate from the manual script. The fixtures in `conftest.py` build small synthetic DICOM datasets in memory instead of using the sample scan, on purpose, so I can hit specific edge cases (missing tags, MONOCHROME1, a window width of zero, two series mixed in one folder) without needing the real data to happen to contain them.
 
 ```bash
-pip install -r requirements.txt
-pytest --cov=. --cov-report=term-missing
+pip install -e ".[dev]"
+pytest --cov=dicom_viewer --cov-report=term-missing
 ```
 
-`local series test.py` is separate from this suite. It's a manual
-script for quickly checking a real file/folder/batch by eye (it prints
-metadata and saves preview PNGs to `output_previews/`), not something
-meant to run in CI.
+## Problems I ran into
 
-## Requirements
+- **Overflow on rescale** — mentioned above, fixed by upcasting to float32 before the multiply instead of after.
+- **Tags that aren't scalars** — `WindowCenter`/`WindowWidth` can legally be stored as multi-value arrays instead of a single number. I added a small helper (`_first_value`) that just grabs the first value so the rest of the code doesn't have to think about it.
+- **Missing window values entirely** — some files just don't have a window center/width at all. When that happens I fall back to computing one from the actual data range:
+
+$$w_{auto} = \max(H) - \min(H), \qquad c_{auto} = \frac{\max(H) + \min(H)}{2}$$
+
+- **Mixed series in one folder** — covered above, this is what `series_grouping.py` is for.
+- **Non-isotropic voxels** — covered above, this is what the resampling in `mpr.py` is for.
+
+## Setup
 
 ```bash
-pip install -r requirements.txt
+pip install -e ".[dev]"
 ```
 
-Compressed DICOM transfer syntaxes (JPEG, JPEG2000, JPEG-LS, RLE) need
-an extra codec package pydicom doesn't install by default. If you hit
-a decode error, `dicom_parser.extract_pixel_array` will tell you
-exactly which packages to install (`pylibjpeg`, `pylibjpeg-libjpeg`,
-`pylibjpeg-openjpeg`, or `python-gdcm`).
+That pulls in `pydicom`, `numpy`, `pillow`, `scipy`, plus pytest for testing.
+
+One more thing: some real DICOM files use compression (JPEG2000, JPEG Lossless, RLE) that `pydicom` can't decode on its own. If you hit that, `dicom_parser` will actually tell you which package you're missing, but to just install everything up front:
+
+```bash
+pip install pylibjpeg pylibjpeg-libjpeg pylibjpeg-openjpeg python-gdcm
+```
+
+To try it on the sample data:
+
+```bash
+python scripts/run_local_series.py --series sample_data/ct-lung-screening-nlst-series
+```
+
+## Results
+
+![Upper chest](docs/output_previews/test_1.png)
+
+Upper chest slice. You can see the trachea (dark, low density air) clearly separated from the bone around it, which is what told me the windowing math was actually working right and not just "looks okay by accident."
+
+![Mid-cardiac](docs/output_previews/test_2.png)
+
+Mid-cardiac level, soft tissue windowing. The heart outline and the aorta (the circle above the spine) show up clearly without losing the lung detail around them.
+
+![Sequential slice](docs/output_previews/test_3.png)
+
+A slice right next to the one above, same series. Mostly here to show the rendering stays consistent slice to slice and doesn't randomly shift contrast.
 
 ## Known limitations
 
-- ROI selection is a fixed rectangle passed in as row/col bounds, no
-  freehand or polygon regions.
-- `mpr.py`'s resampling uses linear interpolation, which is fine for
-  viewing but not what you'd want for anything diagnostic.
-- Everything here assumes CT-style single-channel data.
-  `PhotometricInterpretation` values like `RGB` aren't handled.
+- ROI is just a rectangle right now (row/col bounds), no freehand selection.
+- The MPR resampling uses linear interpolation, which looks fine but isn't what you'd want for anything actually diagnostic.
+- Only handles single-channel CT-style data. Doesn't do anything with RGB `PhotometricInterpretation`.
+
+## References
+
+1. NEMA. (2024). *Digital Imaging and Communications in Medicine (DICOM) Standard*. https://www.dicomstandard.org/
+2. Bushberg, J. T., Seibert, J. A., Leidholdt, E. M., & Boone, J. M. (2011). *The Essential Physics of Medical Imaging* (3rd ed.). Lippincott Williams & Wilkins.
+3. Seeram, E. (2015). *Computed Tomography: Physical Principles, Clinical Applications, and Quality Control* (4th ed.). Saunders.
+4. Mason, D., et al. (2023). *pydicom* (v2.4.4) [Software]. https://github.com/pydicom/pydicom
+5. Harris, C. R., Millman, K. J., van der Walt, S. J., et al. (2020). Array programming with NumPy. *Nature*, 585, 357–362.
+6. Clark, K., Vendt, B., Smith, K., et al. (2013). The Cancer Imaging Archive (TCIA). *Journal of Digital Imaging*, 26(6), 1045–1057.
