@@ -1,0 +1,6 @@
+pydicom>=2.4.0
+numpy>=1.24.0
+pillow>=9.5.0
+scipy>=1.11.0
+pytest>=7.4.0
+pytest-cov>=4.1.0
