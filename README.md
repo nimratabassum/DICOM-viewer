@@ -121,54 +121,47 @@ python scripts/run_local_series.py --series sample_data/ct-lung-screening-nlst-s
 
 These are renders straight out of the pipeline, running through the whole rescale -> window -> export chain. They're all from the same NLST series, just at different axial levels, so you can see how the picture changes as you move down through the body.
 
-<img width="512" height="512" alt="test_1" src="https://github.com/user-attachments/assets/1e9faef0-64bb-4275-95d6-24c49b75746b" />
-
+![test_1](docs/output_previews/test_1.png)
 
 Upper chest, right where the trachea splits into the two main bronchi. Lungs are mostly clear here, you can see a few faint dots which are just small vessels caught end-on in cross section.
 
-<img width="512" height="512" alt="test_2" src="https://github.com/user-attachments/assets/6e847993-5678-472f-9815-cfac0a5322ba" />
-
+![test_2](docs/output_previews/test_2.png)
 
 A bit lower, right at the aortic arch, so the mediastinum (that big gray blob in the middle) takes up a lot more space. This is soft tissue windowing, which is why the heart/vessels show up as one solid gray mass instead of being blown out.
 
-<img width="512" height="512" alt="test_3" src="https://github.com/user-attachments/assets/05fec9de-eebf-46e2-bf07-86f71fdf576d" />
-
+![test_3](docs/output_previews/test_3.png)
 
 This one's actually into the upper abdomen already, liver filling most of the right side, stomach on the left with some air in it (the darker mottled area), spleen tucked in behind it.
 
-<img width="512" height="512" alt="test_4" src="https://github.com/user-attachments/assets/187abee6-58c3-4bc1-a186-f8d6f9629546" />
-
+![test_4](docs/output_previews/test_4.png)
 
 Similar level to the first one, slightly lower. Lungs still mostly clear, small scattered vessel markings, trachea visible as a small dark circle up top.
 
-<img width="512" height="512" alt="test_5" src="https://github.com/user-attachments/assets/d3fce5f2-b660-4ea4-abf8-b1ebd8a05a84" />
-
+![test_5](docs/output_previews/test_5.png)
 
 Heart level, similar to test_2 but you can actually see some internal structure in the mediastinum here instead of it being totally uniform gray, probably picking up chamber boundaries or contrast.
-<img width="512" height="512" alt="test_6" src="https://github.com/user-attachments/assets/025e4487-339e-400a-b49e-b972dbc38674" />
 
+![test_6](docs/output_previews/test_6.png)
 
 This is actually up at the shoulder/neck junction, not the chest. You can see the collarbones and the round humeral heads on both sides, plus what looks like contrast sitting in the vessels near the spine.
 
-<img width="512" height="512" alt="test_7" src="https://github.com/user-attachments/assets/c2b03ed1-42c5-4af6-8eab-a4866f1477bd" />
-
+![test_7](docs/output_previews/test_7.png)
 
 Back down to heart level again, similar framing to test_2 and test_5 but the heart shape looks slightly different since this is a different slice in the same region.
 
-<img width="512" height="512" alt="test_8" src="https://github.com/user-attachments/assets/51cf2ee8-b348-458c-9abc-d40016f59e83" />
+![test_8](docs/output_previews/test_8.png)
 
 Upper abdomen, liver dominates the right side of the frame, stomach with a clear gas pocket top left, and what's probably the spleen as the oval shape lower left.
 
-<img width="512" height="512" alt="test_9" src="https://github.com/user-attachments/assets/600e7e83-52e1-46ad-9a51-035e8574ac6f" />
+![test_9](docs/output_previews/test_9.png)
 
 Mid-abdomen. You can make out both kidneys (the rounder shapes toward the back on either side), plus bowel loops and more liver up top.
-<img width="512" height="512" alt="test_10" src="https://github.com/user-attachments/assets/221f5e30-6392-47c1-aa1a-19314c1708c9" />
 
+![test_10](docs/output_previews/test_10.png)
 
 Neck level, lower down than test_6. Shoulders and collarbones on both sides, trachea and spine in the middle, and again some bright contrast-filled vessels near the humeral heads.
 
-<img width="512" height="512" alt="test_11" src="https://github.com/user-attachments/assets/e1643ff9-7887-4ad6-9096-09aae4b2f5a5" />
-
+![test_11](docs/output_previews/test_11.png)
 
 Chest again, heart-level slice, same general anatomy as test_2/5/7 but from yet another point in the series. Having a bunch of these side by side is honestly what convinced me the windowing was actually consistent slice to slice and not just accidentally looking okay on one or two of them.
 
