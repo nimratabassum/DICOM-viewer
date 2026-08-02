@@ -81,9 +81,6 @@ tests/
 scripts/
     run_local_series.py
 
-sample_data/
-    ct-lung-screening-nlst-series/
-
 docs/
     output_previews/
 
