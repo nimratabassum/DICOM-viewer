@@ -140,7 +140,7 @@ Clone the repository:
 
 ```
 git clone https://github.com/nimratabassum/DICOM-viewer.git
-cd dicom-viewer
+cd DICOM-viewer
 ```
 
 Install the package:
