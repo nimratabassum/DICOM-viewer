@@ -62,7 +62,7 @@ CT slices typically have unequal spacing between axes, for example 0.7mm within 
 The repository follows the `src/` layout for installable Python packages.
 
 ```
-src/dicom_viewer/
+src/dicom viewer/
     dicom_parser.py
     dicom_series.py
     series_grouping.py
@@ -139,7 +139,7 @@ This project requires:
 Clone the repository:
 
 ```
-git clone https://github.com/nimratabassum/DICOM-Viewer.git
+git clone https://github.com/nimratabassum/DICOM-viewer.git
 cd dicom-viewer
 ```
 
