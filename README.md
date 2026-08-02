@@ -10,7 +10,7 @@ In addition to the core image processing, this project emphasizes:
 - Automated testing against synthetic edge cases
 - A proper installable package layout
 
-The sample data used throughout is the NLST lung-screening series (`sample_data/ct-lung-screening-nlst-series/`).
+The sample data used throughout is the NLST lung-screening series (ct-lung-screening-nlst-serie).
 
 ---
 
