@@ -1,5 +1,4 @@
-# DICOM Viewer
-docs/output_previews/test_1.png
+# DICOM-viewer
 ## Introduction
 
 This project implements a backend pipeline for loading, processing, and rendering DICOM medical images. A DICOM file stores raw scanner integers plus a large set of hardware-specific metadata, not a directly viewable image, so the pipeline converts that raw data into Hounsfield Units, applies windowing to compress it into a displayable 8-bit range, and exports the result as PNG or JPEG.
